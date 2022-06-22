@@ -29,6 +29,9 @@ const Subsurface = @import("Subsurface.zig");
 seat: *Seat,
 wlr_drag_icon: *wlr.Drag.Icon,
 
+lx: f64,
+ly: f64,
+
 // Always active
 destroy: wl.Listener(*wlr.Drag.Icon) = wl.Listener(*wlr.Drag.Icon).init(handleDestroy),
 map: wl.Listener(*wlr.Drag.Icon) = wl.Listener(*wlr.Drag.Icon).init(handleMap),
@@ -39,7 +42,10 @@ new_subsurface: wl.Listener(*wlr.Subsurface) = wl.Listener(*wlr.Subsurface).init
 commit: wl.Listener(*wlr.Surface) = wl.Listener(*wlr.Surface).init(handleCommit),
 
 pub fn init(drag_icon: *DragIcon, seat: *Seat, wlr_drag_icon: *wlr.Drag.Icon) void {
-    drag_icon.* = .{ .seat = seat, .wlr_drag_icon = wlr_drag_icon };
+    drag_icon.* = .{
+        .seat = seat,
+        .wlr_drag_icon = wlr_drag_icon,
+    };
 
     wlr_drag_icon.events.destroy.add(&drag_icon.destroy);
     wlr_drag_icon.events.map.add(&drag_icon.map);

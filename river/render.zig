@@ -227,7 +227,20 @@ fn renderDragIcons(output: *const Output, now: *os.timespec) void {
 
     var it = server.root.drag_icons.first;
     while (it) |node| : (it = node.next) {
-        const drag_icon = &node.data;
+        const icon = &node.data;
+
+        var lx: f64 = undefined;
+        var ly: f64 = undefined;
+        switch (icon.wlr_drag_icon.drag.grab_type) {
+            .keyboard_pointer => {
+                lx = icon.seat.cursor.wlr_cursor.x + icon.wlr_drag_icon.surface.sx;
+                ly = icon.seat.cursor.wlr_cursor.y + icon.wlr_drag_icon.surface.sy;
+            },
+            .keyboard_touch => {
+                const point = icon.seat.touchGetPoint(icon.wlr_drag_icon.drag.touch_id);
+            },
+            .keyboard => unreachable,
+        }
 
         var rdata = SurfaceRenderData{
             .output = output,
@@ -237,7 +250,7 @@ fn renderDragIcons(output: *const Output, now: *os.timespec) void {
                 drag_icon.wlr_drag_icon.surface.sy - output_box.y,
             .when = now,
         };
-        drag_icon.wlr_drag_icon.surface.forEachSurface(*SurfaceRenderData, renderSurfaceIterator, &rdata);
+        icon.wlr_drag_icon.surface.forEachSurface(*SurfaceRenderData, renderSurfaceIterator, &rdata);
     }
 }
 

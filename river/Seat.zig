@@ -86,12 +86,18 @@ status_trackers: std.SinglyLinkedList(SeatStatus) = .{},
 /// True if a pointer drag is currently in progress
 pointer_drag: bool = false,
 
+/// True if a touch drag is currently in progress
+/// TODO Support one touch drag per touch point, this requires support in wlroots:
+/// https://gitlab.freedesktop.org/wlroots/wlroots/-/issues/3452
+touch_drag: bool = false,
+
 request_set_selection: wl.Listener(*wlr.Seat.event.RequestSetSelection) =
     wl.Listener(*wlr.Seat.event.RequestSetSelection).init(handleRequestSetSelection),
 request_start_drag: wl.Listener(*wlr.Seat.event.RequestStartDrag) =
     wl.Listener(*wlr.Seat.event.RequestStartDrag).init(handleRequestStartDrag),
 start_drag: wl.Listener(*wlr.Drag) = wl.Listener(*wlr.Drag).init(handleStartDrag),
 pointer_drag_destroy: wl.Listener(*wlr.Drag) = wl.Listener(*wlr.Drag).init(handlePointerDragDestroy),
+touch_drag_destroy: wl.Listener(*wlr.Drag) = wl.Listener(*wlr.Drag).init(handleTouchDragDestroy),
 request_set_primary_selection: wl.Listener(*wlr.Seat.event.RequestSetPrimarySelection) =
     wl.Listener(*wlr.Seat.event.RequestSetPrimarySelection).init(handleRequestSetPrimarySelection),
 
@@ -525,30 +531,54 @@ fn handleRequestStartDrag(
 ) void {
     const self = @fieldParentPtr(Self, "request_start_drag", listener);
 
-    if (!self.wlr_seat.validatePointerGrabSerial(event.origin, event.serial)) {
-        log.debug("ignoring request to start drag, " ++
-            "failed to validate pointer serial {}", .{event.serial});
-        if (event.drag.source) |source| source.destroy();
+    if (self.wlr_seat.validatePointerGrabSerial(event.origin, event.serial)) {
+        if (self.pointer_drag) {
+            log.debug("ignoring request to start pointer drag, " ++
+                "another pointer drag is already in progress", .{});
+            return;
+        }
+
+        log.debug("starting pointer drag", .{});
+        self.wlr_seat.startPointerDrag(event.drag, event.serial);
         return;
     }
 
-    if (self.pointer_drag) {
-        log.debug("ignoring request to start pointer drag, " ++
-            "another pointer drag is already in progress", .{});
+    var point: *wlr.TouchPoint = undefined;
+    if (self.wlr_seat.validateTouchGrabSerial(event.origin, event.serial, &point)) {
+        if (self.touch_drag) {
+            log.debug("ignoring request to start touch drag, " ++
+                "another touch drag is already in progress", .{});
+            return;
+        }
+
+        log.debug("starting touch drag", .{});
+        self.wlr_seat.startTouchDrag(event.drag, event.serial, point);
         return;
     }
 
-    log.debug("starting pointer drag", .{});
-    self.wlr_seat.startPointerDrag(event.drag, event.serial);
+    log.debug("ignoring request to start drag, " ++
+        "failed to validate pointer or touch serial {}", .{event.serial});
+    if (event.drag.source) |source| source.destroy();
 }
 
 fn handleStartDrag(listener: *wl.Listener(*wlr.Drag), wlr_drag: *wlr.Drag) void {
     const self = @fieldParentPtr(Self, "start_drag", listener);
 
-    assert(wlr_drag.grab_type == .keyboard_pointer);
+    switch (wlr_drag.grab_type) {
+        .keyboard_pointer => {
+            assert(!self.pointer_drag);
+            self.pointer_drag = true;
+            wlr_drag.events.destroy.add(&self.pointer_drag_destroy);
 
-    self.pointer_drag = true;
-    wlr_drag.events.destroy.add(&self.pointer_drag_destroy);
+            self.cursor.mode = .passthrough;
+        },
+        .keyboard_touch => {
+            assert(!self.touch_drag);
+            self.touch_drag = true;
+            wlr_drag.events.destroy.add(&self.touch_drag_destroy);
+        },
+        .keyboard => unreachable,
+    }
 
     if (wlr_drag.icon) |wlr_drag_icon| {
         const node = util.gpa.create(std.SinglyLinkedList(DragIcon).Node) catch {
@@ -559,16 +589,24 @@ fn handleStartDrag(listener: *wl.Listener(*wlr.Drag), wlr_drag: *wlr.Drag) void 
         node.data.init(self, wlr_drag_icon);
         server.root.drag_icons.prepend(node);
     }
-    self.cursor.mode = .passthrough;
 }
 
 fn handlePointerDragDestroy(listener: *wl.Listener(*wlr.Drag), _: *wlr.Drag) void {
     const self = @fieldParentPtr(Self, "pointer_drag_destroy", listener);
     self.pointer_drag_destroy.link.remove();
 
+    assert(self.pointer_drag);
     self.pointer_drag = false;
     self.cursor.checkFocusFollowsCursor();
     self.cursor.updateState();
+}
+
+fn handleTouchDragDestroy(listener: *wl.Listener(*wlr.Drag), _: *wlr.Drag) void {
+    const self = @fieldParentPtr(Self, "touch_drag_destroy", listener);
+    self.touch_drag_destroy.link.remove();
+
+    assert(self.touch_drag);
+    self.touch_drag = false;
 }
 
 fn handleRequestSetPrimarySelection(
